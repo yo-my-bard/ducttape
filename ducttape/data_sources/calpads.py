@@ -14,9 +14,10 @@ import logging
 
 #local import
 from ducttape.webui_datasource import WebUIDataSource
+from ducttape.exceptions import ReportNotFound
 from ducttape.utils import (
     get_most_recent_file_in_dir,
-    configure_selenium_chrome,
+    DriverBuilder,
     LoggingMixin
 )
 
@@ -70,3 +71,96 @@ class Calpads(WebUIDataSource, LoggingMixin):
         """CALPADS does not have stateful reports"""
         #TODO: Has to be implemented because of metaclass, should we explicitly throw NotImplementedError?
         pass
+
+    def get_current_language_data(self, ssid, second_chance=False):
+        """
+        Search for SSID's latest language data and return the table as a dataframe.
+
+        Get the current language data in CALPADS for the provided SSID. Helpful when
+        updating the student information system when receiving a new student.
+        Returns a dataframe. When using in a Jupyter notebook, use display() instead of
+        print() for checking the language data values in a prettier format.
+
+        Parameters:
+        ssid: CALPADS state student identifier. Can be either a string or integer format.
+        second_chance: used during recursion to try again if the wrong table is found.
+
+        Returns:
+        language_data (DataFrame): The SELA language information on a CALPADS student profile or raise ReportNotFound exception if it fails
+        """
+        self.driver = DriverBuilder().get_driver(headless=self.headless)
+        self._login()
+
+        ssid_search = self.driver.find_element_by_id('inputSSID')
+        ssid_search.send_keys(ssid)
+
+        ssid_btn = self.driver.find_element_by_id('btnSearchSSIDLeftNav')
+        ssid_btn.click()
+
+        self.driver.find_element_by_xpath('//*[@id="StudentDetailsPanelBar"]/li[4]/a').click() #open up the SELA Grid
+        try:
+            WebDriverWait(self.driver, self.wait_time).until(EC.visibility_of_element_located((By.ID, 'SELAGrid')))
+        except TimeoutException:
+            #Maybe the click didn't work the first time, try clicking again
+            self.driver.find_element_by_xpath('//*[@id="StudentDetailsPanelBar"]/li[4]/a').click()
+            WebDriverWait(self.driver, self.wait_time).until(EC.visibility_of_element_located((By.ID, 'SELAGrid')))
+        
+        try:
+            WebDriverWait(self.driver, self.wait_time).until(EC.visibility_of_element_located((By.XPATH, '//*[@id="SELAGrid"]/table/tbody'))) #waiting for the table to load
+        except TimeoutException:
+            #If the table body is never in the DOM, but the table header exists, it could just mean the SSID doesn't have data.
+            if self.driver.find_element_by_xpath('//*[@id="SELAGrid"]/table'): #If the header of the table exists...
+                self.log.info("Student {} does not appear to have any language data. Once confirmed, student should get tested.".format(ssid))
+                lang_data = pd.read_html(self.driver.page_source)[1]
+                try:
+                    assert all(lang_data.columns == ['Unnamed: 0', 'Reporting LEA', 'Acquisition Code', 'Status Date', 'Primary Language Code',
+                                            'Correction Reason Code','Effective Start Date'])
+                except AssertionError:
+                    self.log.info('Found a table, but it was the wrong one it seems. Trying again')
+                    self.get_current_language_data(ssid, True)
+                except ValueError: #the assert comparison fails if the array lengths aren't the same
+                    self.log.info('Found a table, but it was the wrong one it seems. Trying again')
+                    self.get_current_language_data(ssid, True)
+                else:
+                    #Passed the validations/checks, return the dataframe
+                    self.driver.close()
+                    return lang_data
+            else:
+                self.log.info('Something unexpected happened when trying to load the SELA table for {}'.format(ssid))
+                self.driver.close() #TODO: Should the driver always close at this point?
+                raise ReportNotFound #TODO: A more explicit/accurate error might be helpful
+        
+        #If the table body *is* found in the DOM, do the following:
+        lang_data = pd.read_html(self.driver.page_source)[1] #TODO: Index error happened? Might be going too fast?
+        if not second_chance:
+            try:
+                assert all(lang_data.columns == ['Unnamed: 0', 'Reporting LEA', 'Acquisition Code', 'Status Date', 'Primary Language Code',
+                                            'Correction Reason Code','Effective Start Date'])
+            except AssertionError:
+                self.log.info('Found a table, but it was the wrong one it seems. Trying again')
+                self.get_current_language_data(ssid, True)
+            except ValueError: #the assert comparison fails if the array lengths aren't the same
+                self.log.info('Found a table, but it was the wrong one it seems. Trying again')
+                self.get_current_language_data(ssid, True)
+            else:
+                if len(lang_data) != 0:
+                    self.log.info('Found the latest language data for {}: Status: {}, Status Date: {}, Primary Lang: {}.'.format(ssid, lang_data['Acquisition Code'][0], lang_data['Status Date'][0], lang_data['Primary Language Code'][0]))
+                else:
+                    self.log.info('Student {} does not appear to have any language data. Once confirmed, student should get tested.'.format(ssid))
+                self.driver.close()
+                return lang_data
+        else: #Sometimes the wrong tab is clicked and the wrong table is indexed at 1. #TODO: Add a max_attempts to get it right feature - this issue seems dependent on loading issues
+            try:
+                assert all(lang_data.columns == ['Unnamed: 0', 'Reporting LEA', 'Acquisition Code', 'Status Date', 'Primary Language Code',
+                                            'Correction Reason Code','Effective Start Date'])
+            except AssertionError:
+                self.log.info('Found the wrong table again. Closing the driver.')
+                self.driver.close()
+                raise ReportNotFound #TODO: A more explicit/accurate error might be helpful
+            else:
+                if len(lang_data) != 0:
+                    self.log.info('Found the latest language data for {}: Status: {}, Status Date: {}, Primary Lang: {}.'.format(ssid, lang_data['Acquisition Code'][0], lang_data['Status Date'][0], lang_data['Primary Language Code'][0]))
+                else:
+                    self.log.info('Student {} does not appear to have any language data. Once confirmed, student should get tested.'.format(ssid))
+                self.driver.close()
+                return lang_data
