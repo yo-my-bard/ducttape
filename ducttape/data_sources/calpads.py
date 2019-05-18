@@ -13,6 +13,7 @@ import glob
 import logging
 
 #local import
+from ducttape.webui_datasource import WebUIDataSource
 from ducttape.utils import (
     get_most_recent_file_in_dir,
     configure_selenium_chrome,
@@ -22,7 +23,7 @@ from ducttape.utils import (
 class Calpads(WebUIDataSource, LoggingMixin):
     """Class for interacting with the web ui of CALPADS"""
 
-    def __init__(username, password, wait_time, hostname, temp_folder_path, headless=False):
+    def __init__(self, username, password, wait_time, hostname, temp_folder_path, headless=False):
         super().__init__(username, password, wait_time, hostname, temp_folder_path, headless)
         self.uri_scheme = 'https://'
         self.base_url = self.uri_scheme + self.hostname
