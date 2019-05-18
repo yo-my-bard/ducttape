@@ -12,6 +12,7 @@ from ducttape.data_sources import clever as cl
 from ducttape.data_sources import typingagent as ta
 from ducttape.data_sources import informedk12 as ik12
 from ducttape.data_sources import lexia as lx
+from ducttape.data_sources import calpads as cp
 from ducttape.exceptions import (
     InvalidLoginCredentials,
     ReportNotFound
@@ -730,6 +731,27 @@ class TestCleverDataSource(unittest.TestCase):
         print(df_result)
 
 
+class TestCalpadsDataSource(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        config_section_name = 'Calpads'
+        args = {
+            'hostname': config[config_section_name]['hostname'],
+            'username': config[config_section_name]['username'],
+            'password': config[config_section_name]['password'],
+            'wait_time': int(config[config_section_name]['wait_time']),
+            'temp_folder_path': config[config_section_name]['temp_folder_path']
+        }
+        cls.cp = cp.Calpads(**args)
+
+    def setUp(self):
+        self.assertTrue(isinstance(self.cp, cp.Calpads))
+
+    def test_get_current_language_data(self):
+        result = self.cp.get_current_language_data(1234567890)
+        self.assertTrue(isinstance(result, pd.DataFrame))
+
+        
 if __name__ == '__main__':
     # uncomment the next two lines to just test the SchoolMint code
     # lexia = unittest.defaultTestLoader.loadTestsFromTestCase(TestLexiaDataSource)
@@ -758,6 +780,10 @@ if __name__ == '__main__':
     # uncomment the next two lines to just test the Typing Agent code
     # typingagent = unittest.defaultTestLoader.loadTestsFromTestCase(TestTypingAgentDataSource)
     # unittest.TextTestRunner().run(typingagent)
+
+    # uncomment the next two lines to just test the CALPADS code
+    # calpads = unittest.defaultTestLoader.loadTestsFromTestCase(TestCalpadsDataSource)
+    # unittest.TextTestRunner().run(calpads)
 
     # uncomment the following line to run all tests.
     #unittest.main()
