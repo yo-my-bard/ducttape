@@ -72,6 +72,22 @@ class Calpads(WebUIDataSource, LoggingMixin):
         #TODO: Has to be implemented because of metaclass, should we explicitly throw NotImplementedError?
         pass
 
+    def _select_lea(self, lea_code):
+         """
+         Factored out common process for switching to a different LEA in the dropdown
+         
+         Args:
+         lea_code (str): string of the seven digit number found next to your LEA name in the org select menu. For most LEAs,
+         this is the CD part of the County-District-School (CDS) code. For independently reporting charters, it's the S.
+         """
+         select = Select(self.driver.find_element_by_id('org-select'))
+         for opt in select.options:
+             if lea_code in opt.text:
+                 opt.click()
+                 break
+         #Wait for site to re-load if it registered a change in LEA
+         WebDriverWait(self.driver, self.wait_time).until(EC.element_to_be_clickable((By.ID, 'org-select')))
+
     def get_current_language_data(self, ssid, second_chance=False):
         """
         Search for SSID's latest language data and return the table as a dataframe.
@@ -81,7 +97,7 @@ class Calpads(WebUIDataSource, LoggingMixin):
         Returns a dataframe. When using in a Jupyter notebook, use display() instead of
         print() for checking the language data values in a prettier format.
 
-        Parameters:
+        Args:
         ssid: CALPADS state student identifier. Can be either a string or integer format.
         second_chance: used during recursion to try again if the wrong table is found.
 
