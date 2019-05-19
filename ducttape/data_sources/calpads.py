@@ -30,6 +30,11 @@ class Calpads(WebUIDataSource, LoggingMixin):
         super().__init__(username, password, wait_time, hostname, temp_folder_path, headless)
         self.uri_scheme = 'https://'
         self.base_url = self.uri_scheme + self.hostname
+        stream_hdlr = logging.StreamHandler()
+        log_fmt = '%(asctime)s CALPADS: %(message)s'
+        stream_hdlr.setFormatter(logging.Formatter(fmt=log_fmt))
+        self.log.addHandler(stream_hdlr)
+        self.log.setLevel(logging.INFO)
 
     def _login(self):
         """Logs into CALPADS"""
@@ -136,7 +141,6 @@ class Calpads(WebUIDataSource, LoggingMixin):
         except TimeoutException:
             #If the table body is never in the DOM, but the table header exists, it could just mean the SSID doesn't have data.
             if self.driver.find_element_by_xpath('//*[@id="SELAGrid"]/table'): #If the header of the table exists...
-                self.log.info("Student {} does not appear to have any language data. Once confirmed, student should get tested.".format(ssid))
                 lang_data = pd.read_html(self.driver.page_source)[1]
                 try:
                     assert all(lang_data.columns == ['Unnamed: 0', 'Reporting LEA', 'Acquisition Code', 'Status Date', 'Primary Language Code',
@@ -149,6 +153,7 @@ class Calpads(WebUIDataSource, LoggingMixin):
                     self.get_current_language_data(ssid, True)
                 else:
                     #Passed the validations/checks, return the dataframe
+                    self.log.info("Student {} does not appear to have any language data. Once confirmed, student should get tested.".format(ssid))
                     self.driver.close()
                     return lang_data
             else:
@@ -175,6 +180,8 @@ class Calpads(WebUIDataSource, LoggingMixin):
                             ssid, lang_data['Acquisition Code'][0], lang_data['Status Date'][0], lang_data['Primary Language Code'][0]
                             )
                         )
+                    self.driver.close()
+                    return lang_data
                 else:
                     self.log.info('Student {} does not appear to have any language data. Once confirmed, student should get tested.'.format(ssid))
                 self.driver.close()
@@ -194,6 +201,8 @@ class Calpads(WebUIDataSource, LoggingMixin):
                             ssid, lang_data['Acquisition Code'][0], lang_data['Status Date'][0], lang_data['Primary Language Code'][0]
                             )
                         )
+                    self.driver.close()
+                    return lang_data
                 else:
                     self.log.info('Student {} does not appear to have any language data. Once confirmed, student should get tested.'.format(ssid))
                 self.driver.close()
@@ -222,10 +231,6 @@ class Calpads(WebUIDataSource, LoggingMixin):
         """
         #already changed to appropriate LEA
         extract_name = extract_name.upper()
-
-        #Some validations of required Args
-        if extract_name in ['CENR']:
-            assert academic_year, "For {} Extract, academic_year is required. Format YYYY-YYYY".format(extract_name)
 
         #navigate to extract page
         if extract_name == 'SSID':
@@ -269,7 +274,11 @@ class Calpads(WebUIDataSource, LoggingMixin):
             #Currently, SPRG page has a btn-secondary class.
             req = self.driver.find_element_by_class_name('btn-secondary')
         req.click()
-        WebDriverWait(self.driver, self.wait_time).until(EC.visibility_of_element_located((By.CLASS_NAME, 'alert-success')))
+        try:
+            WebDriverWait(self.driver, self.wait_time).until(EC.visibility_of_element_located((By.CLASS_NAME, 'alert-success')))
+        except TimeoutException:
+            self.log.info()
+            self.log.han
         
         self.log.info("{} {} Extract Request made successfully. Please check back later for download".format(lea_code, extract_name))
         self.driver.get("https://www.calpads.org")
@@ -373,7 +382,7 @@ class Calpads(WebUIDataSource, LoggingMixin):
     def download_extract(self, lea_code, extract_name, active_students=None, academic_year=None, adjusted_enroll=None,
                         temp_folder_name=None, max_attempts=10, pandas_read_csv_kwargs={}):
         """
-        Request the extract from CALPADS.
+        Request an extract with the extract_name from CALPADS.
         
         For Direct Certification Extract, pass in extract_name='DirectCertification'. For SSID Request Extract, pass in 'SSID'.
         For the others, use their abbreviated acronym, e.g. SENR, SELA, etc.
@@ -391,13 +400,17 @@ class Calpads(WebUIDataSource, LoggingMixin):
         temp_folder_name (str): the name for a sub-directory in which the files from the browser will be stored. If this directory does not exist,\
             it will be created. The parent directory will be the temp_folder_path used when setting up Calpads object. If None, a temporary directory\
             will be created and deleted as part of cleanup.
-        max_attempts (int): the max number of times to try checking for the download. There's a 2 minute wait between each attempt.
+        max_attempts (int): the max number of times to try checking for the download. There's a 1 minute wait between each attempt.
         pandas_read_csv_kwargs: additional arguments to pass to Pandas read_csv
 
         Returns:
         DataFrame: A Pandas DataFrame of the extract
         """
         extract_name = extract_name.upper()
+        #Some validations of required Args
+        if extract_name in ['CENR']:
+            assert academic_year, "For {} Extract, academic_year is required. Format YYYY-YYYY".format(extract_name)
+
         if temp_folder_name:
             extract_download_folder_path = self.temp_folder_path + '/' + temp_folder_name
             os.makedirs(extract_download_folder_path, exist_ok=True)
@@ -450,7 +463,7 @@ class Calpads(WebUIDataSource, LoggingMixin):
             else:
                 attempt += 1
                 self.log.info("The download doesn't seem ready during attempt #{} for LEA {}".format(attempt, lea_code))
-                time.sleep(120) #We do want a full two minutes wait
+                time.sleep(60) #We do want a full minute wait
                 self.driver.refresh()
                 WebDriverWait(self.driver, self.wait_time).until(EC.element_to_be_clickable((By.ID, 'org-select')))
         
