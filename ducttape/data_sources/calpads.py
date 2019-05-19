@@ -14,7 +14,7 @@ import logging
 
 #local import
 from ducttape.webui_datasource import WebUIDataSource
-from ducttape.exceptions import ReportNotFound
+from ducttape.exceptions import ReportNotFound, ReportNotReady
 from ducttape.utils import (
     get_most_recent_file_in_dir,
     DriverBuilder,
@@ -35,10 +35,10 @@ class Calpads(WebUIDataSource, LoggingMixin):
         try:
             WebDriverWait(self.driver, self.wait_time).until(EC.presence_of_element_located((By.CLASS_NAME, 'btn-primary')))
         except TimeoutException:
-            self.log.info("Was unable to reach the login page. Check the browser: {}".format(self.driver_calpads.title))
+            self.log.info("Was unable to reach the login page. Check the browser: {}".format(self.driver.title))
             return False
         except NoSuchElementException:
-            self.log.info("Was unable to reach the login page. Check the browser: {}".format(self.driver_calpads.title))
+            self.log.info("Was unable to reach the login page. Check the browser: {}".format(self.driver.title))
             return False
         user = self.driver.find_element_by_id("Username")
         user.send_keys(self.username)
@@ -180,3 +180,181 @@ class Calpads(WebUIDataSource, LoggingMixin):
                     self.log.info('Student {} does not appear to have any language data. Once confirmed, student should get tested.'.format(ssid))
                 self.driver.close()
                 return lang_data
+    
+    def _request_extract(self, lea_code, extract_name, active_students=None, academic_year=None, adjusted_enroll=None):
+        """
+        Request the extract from CALPADS.
+        
+        For Direct Certification Extract, pass in extract_name='DirectCertification'. For SSID Request Extract, pass in 'SSID'.
+        For the others, use their abbreviated acronym, e.g. SENR, SELA, etc.
+        
+        Args:
+        lea_code (str): string of the seven digit number found next to your LEA name in the org select menu. For most LEAs,\
+            this is the CD part of the County-District-School (CDS) code. For independently reporting charters, it's the S.
+        extract_name (str): For Direct Certification Extract, pass in extract_name='DirectCertification'. For SSID Request Extract, pass in 'SSID'.\
+            For the others, use their abbreviated acronym, e.g. SENR, SELA, etc. Spelling matters, capitalization does not.
+        active_students (bool): Optional. When using SPRG, True checks off Active Student in the form. When True, extract pulls only student programs \
+            with a NULL exit date for the program at the time of the request.
+        academic_year (str): String in the format YYYY-YYYY. Required only for some extracts.
+        adjusted_enroll (bool): Adjusted cumulative enrollment. When True, pulls students with enrollments dates that fall in the typical school year.\
+            When False, it pulls students with enrollments from July to June (7/1/YYYY - 6/30/YYYZ). Optional and used only for CENR.
+
+        Returns:
+        bool: True for a successful extract request
+        """
+        #already changed to appropriate LEA
+        extract_name = extract_name.upper()
+
+        #Some validations of required Args
+        if extract_name in ['CENR']:
+            assert academic_year, "For {} Extract, academic_year is required. Format YYYY-YYYY".format(extract_name)
+            
+        #navigate to extract page
+        if extract_name == 'SSID':
+            self.driver.get('https://www.calpads.org/Extract/SSIDExtract')
+        elif extract_name == 'DIRECTCERTIFICATION':
+            self.driver.get('https://www.calpads.org/Extract/DirectCertificationExtract')
+        else:
+            self.driver.get('https://www.calpads.org/Extract/ODSExtract?RecordType={}'.format(extract_name))
+        
+        #confirm that we made it to a valid request extract page
+        try:
+            #Check that we made it to a page with a "Request File" button
+            if extract_name != 'SPRG':
+                WebDriverWait(self.driver, self.wait_time).until(EC.text_to_be_present_in_element((By.CLASS_NAME, 'btn-primary'), 'Request File'))
+            else:
+                #Currently, SPRG page has a btn-secondary class. Could change later and break the code. ¯\_(ツ)_/¯ 
+                WebDriverWait(self.driver, self.wait_time).until(EC.text_to_be_present_in_element((By.CLASS_NAME, 'btn-secondary'), 'Request File'))
+        except TimeoutException:
+            self.log.info("The requested extract, {}, is not a supported extract name.".format(extract_name))
+            raise ReportNotFound
+        
+        #Select the schools (generally move all) TODO: Consider supporting selective school selection
+        self.__move_all_for_extract_request()
+
+        #Dispatch to form handlers
+        form_handlers = {
+            'SSID': lambda: self.__fill_ssid_request_extract(lea_code),
+            'DIRECTCERTIFICATION': lambda: self.__fill_dc_request_extract(),
+            'SENR': lambda: self.__fill_senr_request_extract(),
+            'SELA': lambda: self.__fill_sela_request_extract(),
+            'SPRG': lambda: self.__fill_sprg_request_extract(active_students),
+            'CENR': lambda: self.__fill_cenr_request_extract(academic_year, adjusted_enroll),
+        }
+        #Call the handler
+        form_handlers[extract_name]()
+
+        #Click request button
+        if extract_name != 'SPRG':
+            req = self.driver.find_element_by_class_name('btn-primary')
+        else:
+            #Currently, SPRG page has a btn-secondary class.
+            req = self.driver.find_element_by_class_name('btn-secondary')
+        req.click()
+        WebDriverWait(self.driver, self.wait_time).until(EC.visibility_of_element_located((By.CLASS_NAME, 'alert-success')))
+        
+        self.log.info("{} {} Extract Request made successfully. Please check back later for download".format(lea_code, extract_name))
+        self.driver.get("https://www.calpads.org")
+
+        return True
+
+    #Expecting to need specific method handlers for the extracts. e.g. _request_senr_extract, _request_ssid_extract
+    def __move_all_for_extract_request(self):
+        """Refactored method to click move all in request extract forms"""
+        #Defaults to the first moveall button which is generally what we want. TODO: Consider supporting other extract request methods. e.g. date range, etc.
+        moveall = self.driver.find_element_by_class_name('moveall')
+        moveall.click()
+        #TODO: Confirm that we don't need to wait for anything here.
+
+    def __fill_ssid_request_extract(self, lea_code):
+        """Messiest extract request handler. Assumes that a recent SENR file has been fully Posted for the SSID extract to be current."""
+        #We're going back to FileSubmission because we need the job ID for the latest file upload.
+        self.driver.get('https://www.calpads.org/FileSubmission')
+        try:
+            WebDriverWait(self.driver, self.wait_time).until(EC.visibility_of_element_located((By.XPATH, '//*[@id="FileSubmissionSearchResults"]/table')))
+            jid = self.driver.find_element_by_xpath('//*[@id="FileSubmissionSearchResults"]/table/tbody/tr[1]/td[2]').text            
+        except NoSuchElementException:
+            self.driver.get('https://www.calpads.org/FileSubmission/')
+            self.driver.refresh()
+            WebDriverWait(self.driver, self.wait_time).until(EC.visibility_of_element_located((By.XPATH, '//*[@id="FileSubmissionSearchResults"]/table')))
+        finally:
+            jid = self.driver.find_element_by_xpath('//*[@id="FileSubmissionSearchResults"]/table/tbody/tr[1]/td[2]').text
+        #make sure the first row is what is expected
+        assert self.driver.find_element_by_xpath('//*[@id="FileSubmissionSearchResults"]/table/tbody/tr[1]/td[6]').text == 'SSID-Enrollment',  "Found a job ID, but it doesn't look like it's for an SSID extract."
+
+        #navigate to extract page
+        self.driver.get('https://www.calpads.org/Extract/SSIDExtract')
+
+        try:
+            jobid_option = WebDriverWait(self.driver, self.wait_time).until(EC.element_located_selection_state_to_be((By.XPATH,'//*[@id="SelectedJobIDssidExtractbyJob"]/option'), True))
+        except TimeoutException:
+            self.log.info('Job ID failed to automatically populate for SSID Extract for {}. Did you post the file you uploaded yet?'.format(lea_code))
+            raise ReportNotReady
+        else:
+            WebDriverWait(self.driver, self.wait_time).until(EC.element_located_selection_state_to_be((By.XPATH,'//*[@id="SelectedJobIDssidExtractbyJob"]/option'), True))
+            select = Select(self.driver.find_element_by_id('SelectedJobIDssidExtractbyJob'))
+            #Find the element that's been pre-selected
+        for opt in select.all_selected_options: #TODO: this returned stale element once for some reason...
+            self.driver.execute_script("arguments[0].removeAttribute('selected')", opt)
+            #TODO: Confirm if this needs a wait, sometimes throws errors here            
+        for opt in select.options:
+            if opt.get_attribute('value') == jid:
+                self.driver.execute_script("arguments[0].setAttribute('selected', 'selected')", opt)
+            else:
+                continue
+        
+        self.__move_all_for_extract_request()
+        #Defaulting to all grades TODO: Maybe support specific grades? Doubt it'd be useful.
+        all_grades = Select(self.driver.find_element_by_id('GradeLevel'))
+        all_grades.select_by_visible_text('All')
+        
+    
+    def __fill_sprg_request_extract(self, active_students):
+        """Handler for SPRG Extract Request form. Mostly just for selecting all programs in the required field.
+        Args:
+        active_students (bool): when True, extract only pulls students without an exit date in the program. i.e. have NULL exit dates.
+        """
+        #Check off Active Students
+        if active_students:
+            elem = self.driver.find_element_by_id('ActiveStudentsprgAcdmcYear')
+            elem.click()
+            #TODO: Confirm no need to wait
+        
+        #Select programs - defaulting to All TODO: Support specific programs.
+        select = Select(self.driver.find_element_by_id('EducationProgramCodesprgAcdmcYear'))
+        select.select_by_value("All")
+        #TODO: Confirm no need to wait
+
+    def __fill_dc_request_extract(self):
+        """Handler for Direct Certification Extract request form. Currently only supports default values at loading."""
+        pass
+    
+    def __fill_sela_request_extract(self):
+        """Handler for SELA Extract request form. Currently only supports default values at loading."""
+        pass
+    
+    def __fill_senr_request_extract(self):
+        """Handler for SENR Extract request form. Currently only supports default values at loading."""
+        pass
+
+    def __fill_cenr_request_extract(self, academic_year, adjusted_enroll):
+        """Handler for CENR Extract request form.
+        Args:
+        adjusted_enroll (bool): Adjusted cumulative enrollment. When True, pulls students with enrollments dates that fall in the typical school year.\
+            When False, it pulls students with enrollments from July to June (7/1/YYYY - 6/30/YYYZ)
+        academic_year (str): a string in the format, YYYY-YYYY, e.g. 2018-2019.
+        """
+        #Defaulting to all grades TODO: Maybe support specific grades? Doubt it'd be useful.
+        all_grades = Select(self.driver.find_element_by_id('GradeLevel'))
+        all_grades.select_by_visible_text('All')
+
+        #Academic year
+        year = Select(self.driver.find_element_by_id('AcademicYear'))
+        year.select_by_visible_text(academic_year)
+
+
+    def download_extract(self, extract_name, max_attempts=10):
+        """This is what users are expected to call"""
+        #Call request extract
+        #Handle download
+        pass
