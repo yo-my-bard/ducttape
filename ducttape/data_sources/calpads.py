@@ -11,6 +11,8 @@ from selenium.webdriver.common.keys import Keys
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 import glob
 import logging
+import shutil
+from tempfile import mkdtemp
 
 #local import
 from ducttape.webui_datasource import WebUIDataSource
@@ -88,6 +90,14 @@ class Calpads(WebUIDataSource, LoggingMixin):
          #Wait for site to re-load if it registered a change in LEA
          WebDriverWait(self.driver, self.wait_time).until(EC.element_to_be_clickable((By.ID, 'org-select')))
 
+    def _rename_a_calpads_download(self, folder_path, new_file_text):
+        """Gets most recent file in the object's calpads folder and renames it with new_file_text with timestamp appended"""
+
+        recent_file = get_most_recent_file_in_dir(folder_path)
+        file_ext = os.path.splitext(recent_file)[1]
+        new_file = folder_path + "/" + str(new_file_text) + " " + str(dt.datetime.now().strftime('%Y-%m-%d %H_%M_%S')) + file_ext
+        os.rename(recent_file, new_file)
+
     def get_current_language_data(self, ssid, second_chance=False):
         """
         Search for SSID's latest language data and return the table as a dataframe.
@@ -160,7 +170,11 @@ class Calpads(WebUIDataSource, LoggingMixin):
                 self.get_current_language_data(ssid, True)
             else:
                 if len(lang_data) != 0:
-                    self.log.info('Found the latest language data for {}: Status: {}, Status Date: {}, Primary Lang: {}.'.format(ssid, lang_data['Acquisition Code'][0], lang_data['Status Date'][0], lang_data['Primary Language Code'][0]))
+                    self.log.info(
+                        'Found the latest language data for {}: Status: {}, Status Date: {}, Primary Lang: {}.'.format(
+                            ssid, lang_data['Acquisition Code'][0], lang_data['Status Date'][0], lang_data['Primary Language Code'][0]
+                            )
+                        )
                 else:
                     self.log.info('Student {} does not appear to have any language data. Once confirmed, student should get tested.'.format(ssid))
                 self.driver.close()
@@ -175,7 +189,11 @@ class Calpads(WebUIDataSource, LoggingMixin):
                 raise ReportNotFound #TODO: A more explicit/accurate error might be helpful
             else:
                 if len(lang_data) != 0:
-                    self.log.info('Found the latest language data for {}: Status: {}, Status Date: {}, Primary Lang: {}.'.format(ssid, lang_data['Acquisition Code'][0], lang_data['Status Date'][0], lang_data['Primary Language Code'][0]))
+                    self.log.info(
+                        'Found the latest language data for {}: Status: {}, Status Date: {}, Primary Lang: {}.'.format(
+                            ssid, lang_data['Acquisition Code'][0], lang_data['Status Date'][0], lang_data['Primary Language Code'][0]
+                            )
+                        )
                 else:
                     self.log.info('Student {} does not appear to have any language data. Once confirmed, student should get tested.'.format(ssid))
                 self.driver.close()
@@ -208,7 +226,7 @@ class Calpads(WebUIDataSource, LoggingMixin):
         #Some validations of required Args
         if extract_name in ['CENR']:
             assert academic_year, "For {} Extract, academic_year is required. Format YYYY-YYYY".format(extract_name)
-            
+
         #navigate to extract page
         if extract_name == 'SSID':
             self.driver.get('https://www.calpads.org/Extract/SSIDExtract')
@@ -232,7 +250,7 @@ class Calpads(WebUIDataSource, LoggingMixin):
         #Select the schools (generally move all) TODO: Consider supporting selective school selection
         self.__move_all_for_extract_request()
 
-        #Dispatch to form handlers
+        #Need specific method handlers for the extracts. Dispatch to form handlers
         form_handlers = {
             'SSID': lambda: self.__fill_ssid_request_extract(lea_code),
             'DIRECTCERTIFICATION': lambda: self.__fill_dc_request_extract(),
@@ -258,7 +276,6 @@ class Calpads(WebUIDataSource, LoggingMixin):
 
         return True
 
-    #Expecting to need specific method handlers for the extracts. e.g. _request_senr_extract, _request_ssid_extract
     def __move_all_for_extract_request(self):
         """Refactored method to click move all in request extract forms"""
         #Defaults to the first moveall button which is generally what we want. TODO: Consider supporting other extract request methods. e.g. date range, etc.
@@ -353,8 +370,125 @@ class Calpads(WebUIDataSource, LoggingMixin):
         year.select_by_visible_text(academic_year)
 
 
-    def download_extract(self, extract_name, max_attempts=10):
-        """This is what users are expected to call"""
+    def download_extract(self, lea_code, extract_name, active_students=None, academic_year=None, adjusted_enroll=None,
+                        temp_folder_name=None, max_attempts=10, pandas_read_csv_kwargs={}):
+        """
+        Request the extract from CALPADS.
+        
+        For Direct Certification Extract, pass in extract_name='DirectCertification'. For SSID Request Extract, pass in 'SSID'.
+        For the others, use their abbreviated acronym, e.g. SENR, SELA, etc.
+        
+        Args:
+        lea_code (str): string of the seven digit number found next to your LEA name in the org select menu. For most LEAs,\
+            this is the CD part of the County-District-School (CDS) code. For independently reporting charters, it's the S.
+        extract_name (str): For Direct Certification Extract, pass in extract_name='DirectCertification'. For SSID Request Extract, pass in 'SSID'.\
+            For the others, use their abbreviated acronym, e.g. SENR, SELA, etc. Spelling matters, capitalization does not.
+        active_students (bool): Optional. When using SPRG, True checks off Active Student in the form. When True, extract pulls only student programs \
+            with a NULL exit date for the program at the time of the request.
+        academic_year (str): String in the format YYYY-YYYY. Required only for some extracts.
+        adjusted_enroll (bool): Adjusted cumulative enrollment. When True, pulls students with enrollments dates that fall in the typical school year.\
+            When False, it pulls students with enrollments from July to June (7/1/YYYY - 6/30/YYYZ). Optional and used only for CENR.
+        temp_folder_name (str): the name for a sub-directory in which the files from the browser will be stored. If this directory does not exist,\
+            it will be created. The parent directory will be the temp_folder_path used when setting up Calpads object. If None, a temporary directory\
+            will be created and deleted as part of cleanup.
+        max_attempts (int): the max number of times to try checking for the download. There's a 2 minute wait between each attempt.
+        pandas_read_csv_kwargs: additional arguments to pass to Pandas read_csv
+
+        Returns:
+        DataFrame: A Pandas DataFrame of the extract
+        """
+        extract_name = extract_name.upper()
+        if temp_folder_name:
+            extract_download_folder_path = self.temp_folder_path + '/' + temp_folder_name
+            os.makedirs(extract_download_folder_path, exist_ok=True)
+        else:
+            extract_download_folder_path = mkdtemp(dir=self.temp_folder_path)
+
+        self.driver = DriverBuilder().get_driver(download_location=extract_download_folder_path, headless=self.headless)
+        self._login()
+        self._select_lea(lea_code)
         #Call request extract
-        #Handle download
-        pass
+        self._request_extract(
+            lea_code, extract_name, active_students=active_students,
+            academic_year=academic_year, adjusted_enroll=adjusted_enroll
+            )
+
+        #navigate to Direct Cert Extracts Download page
+        self.driver.get("https://www.calpads.org/Extract")
+        WebDriverWait(self.driver, self.wait_time).until(EC.element_to_be_clickable((By.ID, 'org-select')))
+        
+        attempt = 0
+        success = False
+        today_ymd = dt.datetime.now().strftime('%Y-%m-%d')
+        expected_extract_types = {
+            'SENR': "SSID Enrollment ODS Download",
+            'SINF': "Student Information ODS Download",
+            'SPRG': "Student Program ODS Download",
+            'SELA': "Student English Language Acquisition Status ODS Download",
+            'DIRECTCERTIFICATION': 'Direct Certification',
+            'SSID': 'SSID Extract',
+            'CENR': 'Cumulative Enrollment ODS Download' 
+            }
+        
+        while attempt < max_attempts and not success:
+            try:
+                WebDriverWait(self.driver, self.wait_time).until(EC.visibility_of_element_located((By.XPATH, '//*[@id="ExtractRequestGrid"]/table/tbody/tr[1]/td[3]')))
+            except TimeoutException:
+                raise Exception('The extract table took too long to load. Adjust the wait_time variable.')
+            else:
+                extract_type = self.driver.find_element_by_xpath('//*[@id="ExtractRequestGrid"]/table/tbody/tr[1]/td[3]').text
+                extract_status = self.driver.find_element_by_xpath('//*[@id="ExtractRequestGrid"]/table/tbody/tr[1]/td[5]').text #expecting Complete
+                date_requested = dt.datetime.strptime(self.driver.find_element_by_xpath('//*[@id="ExtractRequestGrid"]/table/tbody/tr[1]/td[7]').text,
+                                                "%m/%d/%Y %I:%M %p").date().strftime('%Y-%m-%d') #parse the text datetime on CALPADS, extract the date, format it to match today variable formatting
+            
+            if extract_type == expected_extract_types[extract_name] and extract_status == "Complete" and date_requested == today_ymd: 
+                current_file_num = list(os.walk(extract_download_folder_path))[0][2]
+                dlbutton = self.driver.find_element_by_xpath('//*[@id="ExtractRequestGrid"]/table/tbody/tr[1]/td[1]/a') #Select first download button
+                dlbutton.click()
+                wait_for_new_file_in_folder(extract_download_folder_path, current_file_num)
+                success = True
+            else:
+                attempt += 1
+                self.log.info("The download doesn't seem ready during attempt #{} for LEA {}".format(attempt, lea_code))
+                time.sleep(120) #We do want a full two minutes wait
+                self.driver.refresh()
+                WebDriverWait(self.driver, self.wait_time).until(EC.element_to_be_clickable((By.ID, 'org-select')))
+        
+        if not success:
+            self.log.info("All download attempts failed for {}. Cancelling {} extract download. Make sure you've requested the extract today.".format(lea_code, extract_name))
+            raise ReportNotFound
+        
+        extract_df = pd.read_csv(get_most_recent_file_in_dir(extract_download_folder_path), sep='^', **pandas_read_csv_kwargs)
+        self.log.info("{} {} Extract downloaded.".format(lea_code, extract_name))
+        self.driver.close()
+
+        #Download won't have an easily recognizable name. Rename.
+        #TODO: Unless one memorizes the LEA codes, should consider optionally supporting a text substitution of the lea_code via a dictionary.
+        self._rename_a_calpads_download(extract_download_folder_path, new_file_text=lea_code + " " + extract_name + " Extract")
+
+        if not temp_folder_name:
+            shutil.rmtree(extract_download_folder_path)
+
+        return extract_df
+
+def wait_for_new_file_in_folder(folder_path, num_files_original, max_attempts=20000):
+    """ Waits until a new file shows up in a folder.
+    """
+    file_added = False
+    attempts = 0
+    #TODO Wait based on time passed, not number of loops?
+    while True and attempts < max_attempts:
+        for root, folders, files in os.walk(folder_path):
+            # break 'for' loop if files found
+            if len(files) > len(num_files_original):
+                    file_added = True
+                    break
+            else:
+                continue
+        # break 'while' loop if files found
+        if file_added:
+            # wait for download to complete fully after it's been added - hopefully 3 seconds is enough.
+            time.sleep(3)
+            return True
+        attempts +=1
+    return False
