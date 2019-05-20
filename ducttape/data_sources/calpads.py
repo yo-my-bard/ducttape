@@ -1,7 +1,7 @@
 import os
 import pandas as pd
-import numpy as np
-import ast
+import numpy as np #might not need
+import ast #likely don't need
 import time
 import datetime as dt
 from selenium.webdriver.support.ui import Select, WebDriverWait
@@ -9,7 +9,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.keys import Keys
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
-import glob
+import glob #might not need
 import logging
 import shutil
 from tempfile import mkdtemp
@@ -468,10 +468,12 @@ class Calpads(WebUIDataSource, LoggingMixin):
                 WebDriverWait(self.driver, self.wait_time).until(EC.element_to_be_clickable((By.ID, 'org-select')))
         
         if not success:
+            self.driver.close()
             self.log.info("All download attempts failed for {}. Cancelling {} extract download. Make sure you've requested the extract today.".format(lea_code, extract_name))
             raise ReportNotFound
         
-        extract_df = pd.read_csv(get_most_recent_file_in_dir(extract_download_folder_path), sep='^', **pandas_read_csv_kwargs)
+        #TODO: Generalized method for adding the appropriate headers to the extract types. Make expected_extract_types a dict of lists/tuples then pass names=that_list_or_tuple[index_of_the_columns]?
+        extract_df = pd.read_csv(get_most_recent_file_in_dir(extract_download_folder_path), sep='^', header=None, **pandas_read_csv_kwargs)
         self.log.info("{} {} Extract downloaded.".format(lea_code, extract_name))
         self.driver.close()
 
