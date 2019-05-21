@@ -602,12 +602,12 @@ class Calpads(WebUIDataSource, LoggingMixin):
             self.log.info("All download attempts failed for {}. Cancelling {} extract download. Make sure you've requested the extract today.".format(lea_code, extract_name))
             raise ReportNotFound
         
-        #TODO: Generalized method for adding the appropriate headers to the extract types. Make expected_extract_types a dict of lists/tuples then pass names=that_list_or_tuple[index_of_the_columns]?
         #Set a default variable for names:
         if 'names' not in pandas_read_csv_kwargs.keys():
             #If no column names are passed into pandas, use the default file layout names.
-            pandas_read_csv_kwargs['names'] = EXTRACT_COLUMNS[extract_name]
-        extract_df = pd.read_csv(get_most_recent_file_in_dir(extract_download_folder_path), sep='^', header=None, **pandas_read_csv_kwargs)
+            kwargs_copy = pandas_read_csv_kwargs.copy()
+            kwargs_copy['names'] = EXTRACT_COLUMNS[extract_name]
+        extract_df = pd.read_csv(get_most_recent_file_in_dir(extract_download_folder_path), sep='^', header=None, **kwargs_copy)
         self.log.info("{} {} Extract downloaded.".format(lea_code, extract_name))
         self.driver.close()
 
