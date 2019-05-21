@@ -231,7 +231,9 @@ class Calpads(WebUIDataSource, LoggingMixin):
                 self.driver.close()
                 return lang_data
     
-    def _request_extract(self, lea_code, extract_name, active_students=None, academic_year=None, adjusted_enroll=None):
+    def _request_extract(self, lea_code, extract_name, active_students, academic_year, adjusted_enroll,
+                            active_staff, employment_start_date, employment_end_date, effective_start_date,
+                            effective_end_date):
         """
         Request the extract from CALPADS.
         
@@ -286,6 +288,17 @@ class Calpads(WebUIDataSource, LoggingMixin):
             'SELA': lambda: self.__fill_sela_request_extract(),
             'SPRG': lambda: self.__fill_sprg_request_extract(active_students),
             'CENR': lambda: self.__fill_cenr_request_extract(academic_year, adjusted_enroll),
+            'SINF': lambda: self.__fill_sinf_request_extract(),
+            'CRSC': lambda: self.__fill_crsc_request_extract(academic_year),
+            'CRSE': lambda: self.__fill_crse_request_extract(academic_year),
+            'SASS': lambda: self.__fill_sass_request_extract(academic_year),
+            'SDEM': lambda: self.__fill_sdem_request_extract(active_staff, employment_start_date, employment_end_date,
+                                                            effective_start_date, effective_end_date),
+            'STAS': lambda: self.__fill_stas_request_extract(academic_year),
+            'SCTE': lambda: self.__fill_scte_request_extract(academic_year),
+            'SCSC': lambda: self.__fill_scsc_request_extract(academic_year),
+            'SCSE': lambda: self.__fill_scse_request_extract(academic_year),
+            'SDIS': lambda: self.__fill_sdis_request_extract(academic_year),
         }
         #Call the handler
         form_handlers[extract_name]()
@@ -377,6 +390,10 @@ class Calpads(WebUIDataSource, LoggingMixin):
         """Handler for Direct Certification Extract request form. Currently only supports default values at loading."""
         pass
     
+    def __fill_sinf_request_extract(self):
+        """Handler for SINF Extract request form. Currently only supports default values at loading."""
+        pass
+    
     def __fill_sela_request_extract(self):
         """Handler for SELA Extract request form. Currently only supports default values at loading."""
         pass
@@ -384,6 +401,67 @@ class Calpads(WebUIDataSource, LoggingMixin):
     def __fill_senr_request_extract(self):
         """Handler for SENR Extract request form. Currently only supports default values at loading."""
         pass
+    
+    def __fill_crsc_request_extract(self, academic_year):
+        """Handler for CRSC Extract request form."""
+        if academic_year:
+            year = Select(self.driver.find_element_by_id('AcademicYear'))
+            year.select_by_visible_text(academic_year)
+    
+    def __fill_crse_request_extract(self, academic_year):
+        """Handler for CRSE Extract request form."""
+        if academic_year:
+            year = Select(self.driver.find_element_by_id('AcademicYear'))
+            year.select_by_visible_text(academic_year)
+    
+    def __fill_sass_request_extract(self, academic_year):
+        """Handler for SASS Extract request form."""
+        if academic_year:
+            year = Select(self.driver.find_element_by_id('AcademicYear'))
+            year.select_by_visible_text(academic_year)
+    
+    def __fill_stas_request_extract(self, academic_year):
+        """Handler for STAS Extract request form."""
+        if academic_year:
+            year = Select(self.driver.find_element_by_id('AcademicYear'))
+            year.select_by_visible_text(academic_year)
+    
+    def __fill_scte_request_extract(self, academic_year):
+        """Handler for SCTE Extract request form."""
+        if academic_year:
+            year = Select(self.driver.find_element_by_id('AcademicYear'))
+            year.select_by_visible_text(academic_year)
+    
+    def __fill_scsc_request_extract(self, academic_year):
+        """Handler for SCSC Extract request form."""
+        if academic_year:
+            year = Select(self.driver.find_element_by_id('AcademicYear'))
+            year.select_by_visible_text(academic_year)
+
+    def __fill_scse_request_extract(self, academic_year):
+        """Handler for SCSE Extract request form."""
+        if academic_year:
+            year = Select(self.driver.find_element_by_id('AcademicYear'))
+            year.select_by_visible_text(academic_year)
+    
+    def __fill_sdis_request_extract(self, academic_year):
+        """Handler for SDIS Extract request form."""
+        if academic_year:
+            year = Select(self.driver.find_element_by_id('AcademicYear'))
+            year.select_by_visible_text(academic_year)
+    
+    def __fill_sdem_request_extract(self, active_staff, employment_start_date, employment_end_date, effective_start_date, effective_end_date):
+        """Handler for SDEM Extract request form."""
+        if active_staff:
+            self.driver.find_element_by_id('ActiveStaff').click()
+        if employment_start_date:
+            self.driver.find_element_by_id('EmploymentStartDate').send_keys(employment_start_date)
+        if employment_end_date:
+            self.driver.find_element_by_id('EmploymentEndDate').send_keys(employment_end_date)
+        if effective_start_date:
+            self.driver.find_element_by_id('EffectiveStartDate').send_keys(effective_start_date)
+        if effective_end_date:
+            self.driver.find_element_by_id('EffectiveEndDate').send_keys(effective_end_date)
 
     def __fill_cenr_request_extract(self, academic_year, adjusted_enroll):
         """Handler for CENR Extract request form.
@@ -401,7 +479,8 @@ class Calpads(WebUIDataSource, LoggingMixin):
         year.select_by_visible_text(academic_year)
 
     def download_extract(self, lea_code, extract_name, active_students=None, academic_year=None, adjusted_enroll=None,
-                        temp_folder_name=None, max_attempts=10, pandas_read_csv_kwargs={}):
+                        active_staff=None, employment_start_date=None, employment_end_date=None, effective_start_date=None,
+                        effective_end_date=None, temp_folder_name=None, max_attempts=10, pandas_read_csv_kwargs={}):
         """
         Request an extract with the extract_name from CALPADS.
         
@@ -418,6 +497,13 @@ class Calpads(WebUIDataSource, LoggingMixin):
         academic_year (str): String in the format YYYY-YYYY. Required only for some extracts.
         adjusted_enroll (bool): Adjusted cumulative enrollment. When True, pulls students with enrollments dates that fall in the typical school year.\
             When False, it pulls students with enrollments from July to June (7/1/YYYY - 6/30/YYYZ). Optional and used only for CENR.
+        active_staff (bool): Optional. For SDEM - only extract SDEM records of active staff.
+        employment_start_date (str): Optional. For SDEM - input used to filter Staff members from the extract. Suggested Format: MM/DD/YYYY.
+        employment_end_date (str): Optional. For SDEM - input used to filter Staff members from the extract. Suggested Format: MM/DD/YYYY.
+        effective_start_date (str): Optional. For SDEM, the effective start date of the SDEM record - input used to filter Staff members from\
+            the extract. Suggested Format: MM/DD/YYYY.
+        effective_end_date (str): Optional. For SDEM, the effective end date of the SDEM record - input used to filter Staff members from\
+            the extract. Suggested Format: MM/DD/YYYY.
         temp_folder_name (str): the name for a sub-directory in which the files from the browser will be stored. If this directory does not exist,\
             it will be created. The parent directory will be the temp_folder_path used when setting up Calpads object. If None, a temporary directory\
             will be created and deleted as part of cleanup.
@@ -444,7 +530,10 @@ class Calpads(WebUIDataSource, LoggingMixin):
         #Call request extract
         self._request_extract(
             lea_code, extract_name, active_students=active_students,
-            academic_year=academic_year, adjusted_enroll=adjusted_enroll
+            academic_year=academic_year, adjusted_enroll=adjusted_enroll,
+            active_staff=active_staff, employment_start_date=employment_start_date,
+            employment_end_date=employment_end_date, effective_start_date=effective_start_date,
+            effective_end_date=effective_end_date
             )
 
         #navigate to Direct Cert Extracts Download page
@@ -454,6 +543,7 @@ class Calpads(WebUIDataSource, LoggingMixin):
         attempt = 0
         success = False
         today_ymd = dt.datetime.now().strftime('%Y-%m-%d')
+        #TODO: Confirm these extract names
         expected_extract_types = {
             'SENR': "SSID Enrollment ODS Download",
             'SINF': "Student Information ODS Download",
@@ -461,7 +551,16 @@ class Calpads(WebUIDataSource, LoggingMixin):
             'SELA': "Student English Language Acquisition Status ODS Download",
             'DIRECTCERTIFICATION': 'Direct Certification',
             'SSID': 'SSID Extract',
-            'CENR': 'Cumulative Enrollment ODS Download' 
+            'CENR': 'Cumulative Enrollment ODS Download',
+            'SASS': 'Staff Assignment ODS Download',
+            'SDEM': 'Staff Demographics ODS Download',
+            'STAS': 'Student Absence Summary ODS Download',
+            'SDIS': 'Student Discipline ODS Download',
+            'CRSE': 'Course Section Enrollment ODS Download',
+            'CRSC': 'Course Section Completion ODS Download',
+            'SCSE': 'Student Course Section Enrollment ODS Download',
+            'SCSC': 'Student Course Section Completion ODS Download',
+            'SCTE': 'Student Career Technical Education ODS Download', 
             }
         
         while attempt < max_attempts and not success:
