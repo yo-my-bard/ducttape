@@ -23,7 +23,7 @@ from ducttape.utils import (
     LoggingMixin
 )
 
-#Constants
+#Constants - sorta
 EXTRACT_COLUMNS = {
     'SENR': ['RecordTypeCode', 'TransactionTypeCode', 'LocalRecordID', 'ReportingLEA', 'SchoolOfAttendance', 'SchoolOfAttendanceNPS', 'AcademicYearID',
             'SSID', 'LocalStudentID', 'StudentLegalFirstName', 'StudentLegalMiddleName', 'StudentLegalLastName', 'StudentLegalNameSuffix', 'StudentAliasFirstName',
@@ -44,8 +44,18 @@ EXTRACT_COLUMNS = {
             'StudentSchoolCompletionStatus', 'ExpectedReceiverSchoolofAttendance', 'StudentMetAllUCCSURequirementsIndicator', 'StudentSchoolTransferCode',
             'DistrictofGeographicResidence', 'StudentGoldenStateSealMeritDiplomaIndicator', 'StudentSealofBiliteracyIndicator', 'UploadDate', 'LastDateUpdated'],
     'DIRECTCERTIFICATION': None,
-    'SSID': None
+    'SSID': None,
+    'SDEM': None,
+    'SASS': None,
+    'SDIS': None,
+    'STAS': None,
+    'CRSE': None,
+    'CRSC': None,
+    'SCSE': None,
+    'SCSC': None,
+    'SCTE': None
 }
+
 class Calpads(WebUIDataSource, LoggingMixin):
     """Class for interacting with the web ui of CALPADS"""
 
