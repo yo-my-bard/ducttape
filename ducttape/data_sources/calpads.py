@@ -23,6 +23,29 @@ from ducttape.utils import (
     LoggingMixin
 )
 
+#Constants
+EXTRACT_COLUMNS = {
+    'SENR': ['RecordTypeCode', 'TransactionTypeCode', 'LocalRecordID', 'ReportingLEA', 'SchoolOfAttendance', 'SchoolOfAttendanceNPS', 'AcademicYearID',
+            'SSID', 'LocalStudentID', 'StudentLegalFirstName', 'StudentLegalMiddleName', 'StudentLegalLastName', 'StudentLegalNameSuffix', 'StudentAliasFirstName',
+            'StudentAliasMiddleName', 'StudentAliasLastName', 'StudentBirthDate', 'StudentGenderCode', 'StudentBirthCity', 'StudentBirthStateProvinceCode',
+            'StudentBirthCountryCode', 'EnrollmentSchoolStartDate', 'EnrollmentStatusCode', 'GradeLevelCode', 'EnrollmentSchoolExitDate', 'StudentExitReasonCode',
+            'StudentSchoolCompletionStatus', 'ExpectedReceiverSchoolofAttendance', 'StudentMetAllUCCSURequirementsIndicator', 'StudentSchoolTransferCode',
+            'DistrictofGeographicResidence', 'StudentGoldenStateSealMeritDiplomaIndicator', 'StudentSealofBiliteracyIndicator', 'PostsecondaryTransitionStatusIndicator',
+            'WorkforceReadinessStrategicSkillsCertificateProgramCompletionIndicator', 'FoodHandlerCertificationProgramCompletionIndicator',
+            'PreApprenticeshipCertificationProgramCompletionIndicator', 'PreApprenticeshipProgramNonCertifiedCompletionIndicator', 'StateFederalJobProgramCompletionIndicator',
+            'UploadDate', 'LastDateUpdated'],
+    'SINF': None,
+    'SELA': None,
+    'SPRG': None,
+    'CENR': ['RecordTypeCode', 'TransactionTypeCode', 'LocalRecordID', 'ReportingLEA', 'SchoolOfAttendance', 'SchoolOfAttendanceNPS', 'AcademicYearID',
+            'SSID', 'LocalStudentID', 'StudentLegalFirstName', 'StudentLegalMiddleName', 'StudentLegalLastName', 'StudentLegalNameSuffix', 'StudentAliasFirstName',
+            'StudentAliasMiddleName', 'StudentAliasLastName', 'StudentBirthDate', 'StudentGenderCode', 'StudentBirthCity', 'StudentBirthStateProvinceCode',
+            'StudentBirthCountryCode', 'EnrollmentSchoolStartDate', 'EnrollmentStatusCode', 'GradeLevelCode', 'EnrollmentSchoolExitDate', 'StudentExitReasonCode',
+            'StudentSchoolCompletionStatus', 'ExpectedReceiverSchoolofAttendance', 'StudentMetAllUCCSURequirementsIndicator', 'StudentSchoolTransferCode',
+            'DistrictofGeographicResidence', 'StudentGoldenStateSealMeritDiplomaIndicator', 'StudentSealofBiliteracyIndicator', 'UploadDate', 'LastDateUpdated'],
+    'DIRECTCERTIFICATION': None,
+    'SSID': None
+}
 class Calpads(WebUIDataSource, LoggingMixin):
     """Class for interacting with the web ui of CALPADS"""
 
@@ -76,8 +99,7 @@ class Calpads(WebUIDataSource, LoggingMixin):
 
     def download_url_report(self, report_url, temp_folder_name):
         """CALPADS does not have stateful reports"""
-        #TODO: Has to be implemented because of metaclass, should we explicitly throw NotImplementedError?
-        pass
+        raise NotImplementedError("CALPADS does not have stateful reports.")
 
     def _select_lea(self, lea_code):
          """
@@ -127,8 +149,9 @@ class Calpads(WebUIDataSource, LoggingMixin):
 
         ssid_btn = self.driver.find_element_by_id('btnSearchSSIDLeftNav')
         ssid_btn.click()
-
-        self.driver.find_element_by_xpath('//*[@id="StudentDetailsPanelBar"]/li[4]/a').click() #open up the SELA Grid
+        #Wait for SELA Grid to be clickable
+        elem = WebDriverWait(self.driver, self.wait_time).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="StudentDetailsPanelBar"]/li[4]/a')))
+        elem.click() #open up the SELA Grid
         try:
             WebDriverWait(self.driver, self.wait_time).until(EC.visibility_of_element_located((By.ID, 'SELAGrid')))
         except TimeoutException:
@@ -334,7 +357,6 @@ class Calpads(WebUIDataSource, LoggingMixin):
         all_grades = Select(self.driver.find_element_by_id('GradeLevel'))
         all_grades.select_by_visible_text('All')
         
-    
     def __fill_sprg_request_extract(self, active_students):
         """Handler for SPRG Extract Request form. Mostly just for selecting all programs in the required field.
         Args:
@@ -377,7 +399,6 @@ class Calpads(WebUIDataSource, LoggingMixin):
         #Academic year
         year = Select(self.driver.find_element_by_id('AcademicYear'))
         year.select_by_visible_text(academic_year)
-
 
     def download_extract(self, lea_code, extract_name, active_students=None, academic_year=None, adjusted_enroll=None,
                         temp_folder_name=None, max_attempts=10, pandas_read_csv_kwargs={}):
@@ -473,6 +494,10 @@ class Calpads(WebUIDataSource, LoggingMixin):
             raise ReportNotFound
         
         #TODO: Generalized method for adding the appropriate headers to the extract types. Make expected_extract_types a dict of lists/tuples then pass names=that_list_or_tuple[index_of_the_columns]?
+        #Set a default variable for names:
+        if 'names' not in pandas_read_csv_kwargs.keys():
+            #If no column names are passed into pandas, use the default file layout names.
+            pandas_read_csv_kwargs['names'] = EXTRACT_COLUMNS[extract_name]
         extract_df = pd.read_csv(get_most_recent_file_in_dir(extract_download_folder_path), sep='^', header=None, **pandas_read_csv_kwargs)
         self.log.info("{} {} Extract downloaded.".format(lea_code, extract_name))
         self.driver.close()
