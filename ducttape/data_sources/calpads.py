@@ -327,6 +327,11 @@ class Calpads(WebUIDataSource, LoggingMixin):
         if extract_name in ['CENR', 'SCSC']:
             assert academic_year, "For {} Extract, academic_year is required. Format YYYY-YYYY".format(extract_name)
 
+        #set up driver
+        self.driver = DriverBuilder().get_driver(headless=self.headless)
+        self._login()
+        self._select_lea(lea_code)
+
         #navigate to extract page
         if extract_name == 'SSID':
             self.driver.get('https://www.calpads.org/Extract/SSIDExtract')
@@ -345,6 +350,7 @@ class Calpads(WebUIDataSource, LoggingMixin):
                 WebDriverWait(self.driver, self.wait_time).until(EC.text_to_be_present_in_element((By.CLASS_NAME, 'btn-secondary'), 'Request File'))
         except TimeoutException:
             self.log.info("The requested extract, {}, is not a supported extract name.".format(extract_name))
+            self.driver.close()
             raise ReportNotFound
         
         #Select the schools (generally move all) TODO: Consider supporting selective school selection
@@ -390,6 +396,7 @@ class Calpads(WebUIDataSource, LoggingMixin):
         
         self.log.info("{} {} Extract Request made successfully. Please check back later for download".format(lea_code, extract_name))
         self.driver.get("https://www.calpads.org")
+        self.driver.close()
 
         return True
 
@@ -571,9 +578,7 @@ class Calpads(WebUIDataSource, LoggingMixin):
         year.clear()
         year.send_keys(academic_year)
 
-    def download_extract(self, lea_code, extract_name, active_students=None, academic_year=None, adjusted_enroll=None,
-                        active_staff=True, employment_start_date=None, employment_end_date=None, effective_start_date=None,
-                        effective_end_date=None, temp_folder_name=None, max_attempts=10, pandas_read_csv_kwargs={}):
+    def download_extract(self, lea_code, extract_name, temp_folder_name=None, max_attempts=10, pandas_read_csv_kwargs={}):
         """
         Request an extract with the extract_name from CALPADS.
         
