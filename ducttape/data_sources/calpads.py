@@ -599,9 +599,6 @@ class Calpads(WebUIDataSource, LoggingMixin):
         Returns:
         DataFrame: A Pandas DataFrame of the extract
         """
-        #TODO: Consider designing differently- currently both requesting and downloading LEA are done one at a time. You
-        #can dramatically reduce amount of time needed to wait by requesting for several LEAs and then downloading.
-        #Should API encourage direct request_extract usage?
         extract_name = extract_name.upper()
 
         if temp_folder_name:
@@ -686,6 +683,207 @@ class Calpads(WebUIDataSource, LoggingMixin):
             shutil.rmtree(extract_download_folder_path)
 
         return extract_df
+
+    def __get_report_link(self, report_code):   
+        if report_code == '8.1eoy3':
+            #TODO: Might add another variable and if-condition to re-use for ODS as well as Snapshot
+            return 'https://www.calpads.org/Report/Snapshot/8_1_StudentProfileList_EOY3_'
+        else:
+            for i in self.driver.find_elements_by_class_name('num-wrap-in'):
+                if report_code == i.text:
+                    return i.find_element_by_xpath('./../../a').get_attribute('href')
+            raise ReportNotFound('{} report code cannot be found on the webpage'.format(report_code))
+
+    def __wait_for_view_report_clickable(self, max_attempts):
+        """Check for the delay before webpage allows another change in value for the report request"""
+        attempts = 0
+        loaded = False
+        while not loaded and attempts < max_attempts:
+            try:
+                view_report = WebDriverWait(self.driver, 60).until(EC.element_to_be_clickable((By.ID, 'ReportViewer1_ctl08_ctl00')))
+            except TimeoutException:
+                self.log.info('The Report button has not loaded after 1 minute. Attempt: {}'.format(attempts+1))
+                attempts += 1
+            else:
+                return view_report
+        if not loaded:
+            self.log.info('Max number of attempts waiting for View Report to be clickable reached and all failed.')
+            return False
+
+    def __wait_for_download_dropdown(self,lea_code,report_code, max_attempts):
+        """Check for the download dropdown for reports to be visible before clicking download"""
+        dropdown = False
+        attempts = 0
+        #CSV download button cannot be clicked until the menu is visible
+        #TODO: Use the Async_Wait element visibility as the marker of a completed download? //*[@id="ReportViewer1_AsyncWait_Wait"]
+        while not dropdown and attempts < max_attempts:
+            try:
+                #The dropdown button to make the dropdown appear
+                dropdown_btn = WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ReportViewer1_ctl09_ctl04_ctl00')))
+            except TimeoutException:
+                #This runs every time the report toolbar takes too long to be visible/clickable
+                self.log.info('The report toolbar failed to load for {}'.format(lea_code))
+            else:
+                #This will run only when the report toolbar is visible
+                dropdown_btn.click()
+            try:
+                #Is the dropdown menu visible?
+                WebDriverWait(self.driver, 3).until(EC.visibility_of(self.driver.find_element_by_id('ReportViewer1_ctl09_ctl04_ctl00_Menu')))
+            except TimeoutException:
+                #The dropdown menu is not visible
+                self.log.info('Download Attempt {} failed. Waiting 1 minute.'.format(attempts+1))
+                attempts += 1
+                time.sleep(60)
+            else:
+                dropdown = True
+        
+        if not dropdown:
+            self.log.info('Reached the max download attempts {}. The {} report failed to load for LEA: {}.'.format(max_attempts, report_code, lea_code))
+            raise ReportNotReady
+        else:
+            self.log.info('Opened the {} report download dropdown for LEA: {}'.format(report_code, lea_code))
+            return True
+    
+    def __check_login_request(self):
+        """Check if the report page requested another login before loading"""
+        #TODO: Confirm behavior of 'log in again' logic
+        try:
+            WebDriverWait(self.driver, 10).until(EC.presence_of_element_located((By.ID, 'Password')))
+        except TimeoutException:
+            self.log.info("The web page did not request another login. Checking if the report page is up.")
+        except NoSuchElementException:
+            self.log.info('The web page did not request another login. Checking if the report page is up.')
+        else:
+            user = self.driver.find_element_by_id("Username")
+            user.send_keys(self.username)
+            pw = self.driver.find_element_by_id("Password")
+            pw.send_keys(self.password)
+            agreement = self.driver.find_element_by_id("AgreementConfirmed")
+            self.driver.execute_script("arguments[0].click();", agreement)
+            btn = self.driver.find_element_by_class_name('btn-primary')
+            btn.click() #TODO: Review code and add similar try/except/else situations
+
+    def _download_report_on_page(self, lea_code=None, report_code=None, dl_folder=None, dl_type='csv', max_attempts=10,
+                                pandas_read_csv_kwargs={}):
+        """Downloads the report on the page.
+        If download_report exceeds max download dropdown attempts after clicking view report,
+        use for one-off download of the report available on the page when it finishes loading.
+        """
+        #TODO: Consider data structure to keep track of LEAs that have had a particular report downloaded and when
+        dl_types = {'csv': '//*[@id="ReportViewer1_ctl09_ctl04_ctl00_Menu"]/div[7]/a',
+                    'pdf': '//*[@id="ReportViewer1_ctl09_ctl04_ctl00_Menu"]/div[4]/a',
+                    'excel': '//*[@id="ReportViewer1_ctl09_ctl04_ctl00_Menu"]/div[2]/a'}
+        try:
+            #In case it's not in the report iframe context
+            self.driver.switch_to.frame(self.driver.find_element_by_xpath('//*[@id="reports"]/div/div/div/iframe'))
+        except NoSuchElementException:
+            pass
+        if self.__wait_for_download_dropdown(lea_code, report_code, max_attempts):
+            #TODO: CHANGE FOLDER TO BE TEMP/SPECIFIED FOLDER PATTERN
+            current_file_num = list(os.walk(dl_folder))[0][2]
+            dl_btn = self.driver.find_element_by_xpath(dl_types[dl_type])
+            dl_btn.send_keys(Keys.ENTER)
+            #script occasionally skips this function call for some reason
+            if wait_for_new_file_in_folder(dl_folder, current_file_num):
+                pass
+            else:
+                self.log.info("Download may have taken too long. Ending program.")
+                #TODO: Write a better exception?
+                raise Exception("Download may have taken too long. Ending program.")
+            #TODO: Denote ODS vs. Snapshot in new file name
+            self._rename_a_calpads_download(folder_path=dl_folder, new_file_text="{} {} ".format(lea_code,report_code) )
+            self.log.info('{} Report successfully downloaded for {}.'.format(report_code, lea_code))
+            self.driver.switch_to.default_content()
+            
+            if dl_type == 'csv':
+                report_df = pd.read_csv(get_most_recent_file_in_dir(dl_folder), sep=',', **pandas_read_csv_kwargs)
+            elif dl_type == 'excel':
+                report_df = pd.read_excel(get_most_recent_file_in_dir(dl_folder))
+            else:
+                report_df = None
+            #TODO: Denote Snapshot vs. ODS download in logging
+            self.log.info("{} {} downloaded.".format(lea_code, report_code))
+            self.driver.close()
+
+            #Download won't have an easily recognizable name. Rename.
+            #TODO: Unless one memorizes the LEA codes, should consider optionally supporting a text substitution of the lea_code via a dictionary.
+            self._rename_a_calpads_download(dl_folder, new_file_text=lea_code + " " + report_code)
+
+            return report_df
+        else:
+            return False
+    
+    def download_snapshot_report(self, lea_code, report_code, academic_year='2018-2019',
+    month=None, day=None, snapshot_status='Certified', dl_type='csv', max_attempts=10, temp_folder_name=None, use_session=True, session_exclude = False):
+        """
+        Download a CALPADS report to the CALPADS' folder. 
+        
+        User inputs the report_code of interest and some other optional variables.
+        
+        Parameters:
+        lea: one of the LEA keys in calpads_lea_values in config file
+        report_code (str): Currently support '8.1', '1.17', and '1.18'
+        academic_year (str) optional: Use format YYYY-YYYY, current school year is generally the CALPADS default.
+        month (str) optional: Expects 1-12, but defaults to today's month
+        day (str) optional: Expects 1 to n, n=number of possible days in that month in that year
+        snapshot_status: Certified by default, pass in 'Revised Uncertified' to use the alternative value. For Snapshots only.
+        dl_type (str): The format in which you want the download for the report. Currently supports, csv,excel, and pdf.
+        max_attempts (int): how often to keep trying to check if view report is clickable or if the download dropdown is visible. \
+            Each additional attempt is a 1 minute wait time.
+        use_session bool: track which leas have been checked - allows to more efficiently "recover" where one left off. Defaults to True.
+        session_exclude bool: requires use_session and defaults to False. If True, using the sessions, skips an item if it's marked True this session.
+        
+        Returns:
+        bool: True for a successful download of report, else False.
+        """
+        report_code = report_code.lower()
+
+        if temp_folder_name:
+            report_download_folder_path = self.temp_folder_path + '/' + temp_folder_name
+            os.makedirs(report_download_folder_path, exist_ok=True)
+        else:
+            report_download_folder_path = mkdtemp(dir=self.temp_folder_path)
+
+        self.driver = DriverBuilder().get_driver(download_location=report_download_folder_path, headless=self.headless)
+        self._login()
+        self._select_lea(lea_code)
+
+        #TODO: IMPLEMENT A NEW REPORT LINK LOOKUP
+        self.driver.get('https://www.calpads.org/Report/Snapshot')
+        self.driver.get(self.__get_report_link(report_code))
+        self.driver.switch_to.frame(self.driver.find_element_by_xpath('//*[@id="reports"]/div/div/div/iframe'))
+
+        self.__check_login_request()
+
+        self.__wait_for_view_report_clickable(max_attempts)
+        
+        yr = Select(self.driver.find_element_by_id('ReportViewer1_ctl08_ctl03_ddValue'))
+        yr.select_by_visible_text(academic_year)
+        if not self.__wait_for_view_report_clickable(max_attempts):
+            self.log.info('A requested form value change failed to occur. Discontinuing report download for LEA: {}'.format(lea_code))
+            return False
+        time.sleep(2) #TODO: WebDriverWait
+        status = Select(self.driver.find_element_by_id('ReportViewer1_ctl08_ctl07_ddValue'))
+        status.select_by_visible_text(snapshot_status)
+        if not self.__wait_for_view_report_clickable(max_attempts):
+                self.log.info('A requested form value change failed to occur. Discontinuing report download for LEA: {}'.format(lea_code))
+                return False 
+        
+        if self.__wait_for_view_report_clickable(max_attempts):
+            view_report = self.driver.find_element_by_id('ReportViewer1_ctl08_ctl00') #Have to find the element again to avoid StaleElementReference error
+            view_report.click()
+            #Some reports require two clicks of View Report for no apparent reason
+            if report_code in ['3.2', '3.3', '8.1_EOY3', '1.21'] and self.__wait_for_view_report_clickable(1):
+                view_report = self.driver.find_element_by_id('ReportViewer1_ctl08_ctl00')
+                view_report.click()
+
+        result = self._download_report_on_page(max_attempts=max_attempts, lea_code=lea_code, report_code=report_code, dl_folder=report_download_folder_path, dl_type=dl_type)
+        
+        #clean up
+        if not dl_folder:
+            shutil.rmtree(dl_folder)
+        
+        return result
 
 def wait_for_new_file_in_folder(folder_path, num_files_original, max_attempts=20000):
     """ Waits until a new file shows up in a folder.
