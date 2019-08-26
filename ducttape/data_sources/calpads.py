@@ -17,7 +17,7 @@ from tempfile import mkdtemp
 
 #local import
 from ducttape.webui_datasource import WebUIDataSource
-from ducttape.exceptions import ReportNotFound, ReportNotReady
+from ducttape.exceptions import ReportNotFound, ReportNotReady, RequestError
 from ducttape.utils import (
     get_most_recent_file_in_dir,
     DriverBuilder,
@@ -119,10 +119,10 @@ class Calpads(WebUIDataSource, LoggingMixin):
             WebDriverWait(self.driver, self.wait_time).until(EC.presence_of_element_located((By.CLASS_NAME, 'btn-primary')))
         except TimeoutException:
             self.log.info("Was unable to reach the login page. Check the browser: {}".format(self.driver.title))
-            return False
+            raise RequestError("Unable to reach login page. CALPADS might be down.")
         except NoSuchElementException:
             self.log.info("Was unable to reach the login page. Check the browser: {}".format(self.driver.title))
-            return False
+            raise RequestError("Unable to reach login page. CALPADS might be down.")
         user = self.driver.find_element_by_id("Username")
         user.send_keys(self.username)
         pw = self.driver.find_element_by_id("Password")
@@ -140,13 +140,13 @@ class Calpads(WebUIDataSource, LoggingMixin):
                 alert = WebDriverWait(self.driver, self.wait_time).until(EC.presence_of_element_located((By.XPATH, '/html/body/div[3]/div/form/div[1]')))
                 if 'alert' in alert.get_attribute('class'):
                     self.log.info("Found an expected alert during login: '{}'".format(self.driver.find_element_by_xpath('/html/body/div[3]/div/form/div[1]/div/ul/li').text))
-                    return False
+                    raise RequestError("Found an expected error during login")
                 else:
                     self.log.info('There was an unexpected message during login. See driver.')
-                    return False
+                    raise RequestError("Found an unexpected error during login. See driver.")
             except TimeoutException:
                 self.log.info('There was an unexpected error during login. See driver.')
-                return False
+                raise RequestError("Found an unexpected error during login. See driver.")
 
         return True
 
