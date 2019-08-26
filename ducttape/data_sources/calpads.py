@@ -848,7 +848,7 @@ class Calpads(WebUIDataSource, LoggingMixin):
         self._login()
         self._select_lea(lea_code)
 
-        #TODO: IMPLEMENT A NEW REPORT LINK LOOKUP
+        #Report link lookup
         self.driver.get('https://www.calpads.org/Report/Snapshot')
         self.driver.get(self.__get_report_link(report_code))
         self.driver.switch_to.frame(self.driver.find_element_by_xpath('//*[@id="reports"]/div/div/div/iframe'))
@@ -880,8 +880,8 @@ class Calpads(WebUIDataSource, LoggingMixin):
         result = self._download_report_on_page(max_attempts=max_attempts, lea_code=lea_code, report_code=report_code, dl_folder=report_download_folder_path, dl_type=dl_type)
         
         #clean up
-        if not dl_folder:
-            shutil.rmtree(dl_folder)
+        if not temp_folder_name:
+            shutil.rmtree(report_download_folder_path)
         
         return result
 
