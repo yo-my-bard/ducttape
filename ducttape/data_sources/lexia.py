@@ -31,7 +31,12 @@ from ducttape.utils import (
     DriverBuilder,
     LoggingMixin,
 )
-from ducttape.exceptions import InvalidLoginCredentials
+from ducttape.exceptions import (
+    InvalidLoginCredentials,
+    ReportNotFound,
+    InvalidIMAPParameters,
+    NoDataError,
+)
 
 LEXIA_CSV_ENCODING = 'utf-8'
 
@@ -50,7 +55,6 @@ class Lexia(WebUIDataSource, LoggingMixin):
         self.district_export_email_address = district_export_email_address
         self.district_export_email_password = district_export_email_password
         self.district_export_email_imap_uri = district_export_email_imap_uri
-        self.district_export_email_address = district_export_email_address
         self.district_export_email_folder = district_export_email_folder
         self.district_export_email_wait_time = district_export_email_wait_time
         self.district_export_email_retry_frequency = district_export_email_retry_frequency
@@ -206,26 +210,29 @@ class Lexia(WebUIDataSource, LoggingMixin):
 
         return df_report
 
-    def download_district_export_core5_monthly(self, write_to_disk=None, pandas_read_csv_kwargs={}):
+    def download_district_export_core5_monthly(self, write_to_disk=None, pandas_read_csv_kwargs={},
+                                               period_end_date=dt.datetime.now().date()):
         return self._download_district_export(
-            report_type='Core5 Monthly Export',
-            period_end_date=dt.datetime.now().date(),
+            report_type='export',
+            period_end_date=period_end_date,
             write_to_disk=write_to_disk,
             pandas_read_csv_kwargs=pandas_read_csv_kwargs
         )
 
-    def download_district_export_core5_year_to_date(self, write_to_disk=None, pandas_read_csv_kwargs={}):
+    def download_district_export_core5_year_to_date(self, write_to_disk=None, pandas_read_csv_kwargs={},
+                                                    period_end_date=dt.datetime.now().date()):
         return self._download_district_export(
-            report_type='Core5 Year to Date Export',
-            period_end_date=dt.datetime.now().date(),
+            report_type='expytd',
+            period_end_date=period_end_date,
             write_to_disk=write_to_disk,
             pandas_read_csv_kwargs=pandas_read_csv_kwargs
         )
 
-    def download_district_export_powerup_year_to_date(self, write_to_disk=None, pandas_read_csv_kwargs={}):
+    def download_district_export_powerup_year_to_date(self, write_to_disk=None, pandas_read_csv_kwargs={},
+                                                      period_end_date=dt.datetime.now().date()):
         return self._download_district_export(
-            report_type='PowerUp Year to Date Export',
-            period_end_date=dt.datetime.now().date(),
+            report_type='pupytd',
+            period_end_date=period_end_date,
             write_to_disk=write_to_disk,
             pandas_read_csv_kwargs=pandas_read_csv_kwargs
         )
@@ -236,10 +243,12 @@ class Lexia(WebUIDataSource, LoggingMixin):
             period_start_date = self.lexia_school_year_start_date
         self.__request_district_export(report_type, period_start_date, period_end_date)
 
+        df_report = None
         number_retries = int(self.district_export_email_wait_time / self.district_export_email_retry_frequency)
         for retry_count in range(0, number_retries):
+            if retry_count > 0:
+                time.sleep(self.district_export_email_retry_frequency)
             self.log.info(str(self.district_id) + ': get export_id from email, try: ' + str(retry_count))
-            # catch the case where there is
             try:
                 export_id = self.__get_exportid_from_email()
             except ValueError as err:
@@ -254,10 +263,16 @@ class Lexia(WebUIDataSource, LoggingMixin):
             try:
                 df_report = self.__download_export_for_exportid(export_id, write_to_disk, pandas_read_csv_kwargs)
                 break
-            except ValueError as e:
-                self.log.error(e)
-                time.sleep(self.district_export_email_retry_frequency)
-        return df_report
+            except NoDataError as e:
+                self.log.warning('{}: {} Retrying in {} seconds.'.format(
+                    self.district_id,
+                    e,
+                    self.district_export_email_retry_frequency
+                ))
+        if df_report is None:
+            raise ReportNotFound('No email was received with report id. Make sure the emails are not going to spam.')
+        else:
+            return df_report
 
     def __request_district_export(self, report_type, period_start_date=None, period_end_date=None,
                                   write_to_disk=None):
@@ -287,11 +302,12 @@ class Lexia(WebUIDataSource, LoggingMixin):
 
             payload = {
                 "districtID": self.district_id,
-                "type": 'export',
+                "type": report_type,
                 "email": self.district_export_email_address,
                 "startDate": period_start_date.strftime("%Y-%m-%d"),
                 "endDate": period_end_date.strftime("%Y-%m-%d")
             }
+            self.log.info('{}: Export request payload: {}'.format(self.district_id, payload))
             download_response = s.put(self.base_url + '/exportData/progress', data=payload)
 
             if download_response.ok:
@@ -327,7 +343,7 @@ class Lexia(WebUIDataSource, LoggingMixin):
         rv, data = imap_conn.select('"{}"'.format(self.district_export_email_folder))
         if rv == 'OK':
             self.log.info('Processing mailbox for ' + self.district_export_email_address +
-                             ' in folder ' + self.district_export_email_folder)
+                          ' in folder "' + self.district_export_email_folder + '"')
             export_id = self.__extract_lexia_export_id_from_email(imap_conn)
             if export_id == -1:
                 raise ValueError('No new export_id found on ' + self.district_export_email_address)
@@ -336,7 +352,8 @@ class Lexia(WebUIDataSource, LoggingMixin):
                 return export_id
 
         else:
-            self.log.error("ERROR: Unable to open mailbox ", rv)
+            raise InvalidIMAPParameters(
+                "ERROR: Unable to open mailbox. Check your parameters and email folder. Message: ", rv)
             imap_conn.logout()
 
     def __extract_lexia_export_id_from_email(self, imap_conn):
@@ -403,7 +420,7 @@ class Lexia(WebUIDataSource, LoggingMixin):
             A Pandas dataframe with the report contents
         """
         self.log.info(str(self.district_id) + ': downloading report with export_id=' +
-                         str(export_id))
+                      str(export_id))
         with requests.Session() as s:
             for cookie in self.driver.get_cookies():
                 s.cookies.set(cookie['name'], cookie['value'])
@@ -422,7 +439,7 @@ class Lexia(WebUIDataSource, LoggingMixin):
 
                 # if the dataframe is empty (the report had no data), raise an error
                 if df_report.shape[0] == 0:
-                    raise ValueError('No data in report for user {} at url: {}'.format(
+                    raise NoDataError('No data in report for user {} at url: {}'.format(
                         self.username, export_url))
             else:
                 raise ValueError('Report download request failed')

@@ -15,7 +15,8 @@ from ducttape.data_sources import lexia as lx
 from ducttape.data_sources import calpads as cp
 from ducttape.exceptions import (
     InvalidLoginCredentials,
-    ReportNotFound
+    ReportNotFound,
+    InvalidIMAPParameters,
 )
 from oauth2client.service_account import ServiceAccountCredentials
 import datetime as dt
@@ -70,6 +71,48 @@ class TestLexiaDataSource(unittest.TestCase):
         }
 
         cls.lx_bad_login = lx.Lexia(**args_bad_login)
+
+        args_test_email_timeout = {
+            'hostname': config[config_section_name]['hostname'],
+            'username': config[config_section_name]['username'],
+            'password': config[config_section_name]['password'],
+            'wait_time': int(config[config_section_name]['wait_time']),
+            'temp_folder_path': config[config_section_name]['temp_folder_path'],
+            'lexia_school_year_start_date': dt.datetime.strptime(
+                config[config_section_name]['lexia_school_year_start_date'],
+                '%Y-%m-%d'
+            ).date(),
+            'headless': config[config_section_name].getboolean('headless'),
+            'district_export_email_address': config[config_section_name]['district_export_email_address'],
+            'district_export_email_password': config[config_section_name]['district_export_email_password'],
+            'district_export_email_imap_uri': config[config_section_name]['district_export_email_imap_uri'],
+            'district_id': int(config[config_section_name]['district_id']),
+            'district_export_email_folder': 'bad_folder',
+            'district_export_email_wait_time': 60
+        }
+
+        cls.lx_test_email_timeout = lx.Lexia(**args_test_email_timeout)
+
+        args_test_email_non_existant_folder = {
+            'hostname': config[config_section_name]['hostname'],
+            'username': config[config_section_name]['username'],
+            'password': config[config_section_name]['password'],
+            'wait_time': int(config[config_section_name]['wait_time']),
+            'temp_folder_path': config[config_section_name]['temp_folder_path'],
+            'lexia_school_year_start_date': dt.datetime.strptime(
+                config[config_section_name]['lexia_school_year_start_date'],
+                '%Y-%m-%d'
+            ).date(),
+            'headless': config[config_section_name].getboolean('headless'),
+            'district_export_email_address': config[config_section_name]['district_export_email_address'],
+            'district_export_email_password': config[config_section_name]['district_export_email_password'],
+            'district_export_email_imap_uri': config[config_section_name]['district_export_email_imap_uri'],
+            'district_id': int(config[config_section_name]['district_id']),
+            'district_export_email_folder': '',
+            'district_export_email_wait_time': 30
+        }
+
+        cls.lx_test_email_non_existant_folder = lx.Lexia(**args_test_email_non_existant_folder)
 
     def setUp(self):
         self.assertTrue(isinstance(self.lx, lx.Lexia))
@@ -154,13 +197,43 @@ class TestLexiaDataSource(unittest.TestCase):
 
         # TODO add assertion that file is created in expected dir
 
-    #@unittest.skip('running subset of tests')
+    @unittest.skip('running subset of tests')
     def test_download_district_export_core5_monthly(self):
         df_result = self.lx.download_district_export_core5_monthly(
             write_to_disk=''
         )
         self.assertTrue(isinstance(df_result, pd.DataFrame))
         print(df_result.head())
+
+    @unittest.skip('running subset of tests')
+    def test_download_district_export_core5_ytd(self):
+        df_result = self.lx.download_district_export_core5_year_to_date(
+            write_to_disk=''
+        )
+        self.assertTrue(isinstance(df_result, pd.DataFrame))
+        print(df_result.head())
+
+    @unittest.skip('running subset of tests')
+    def test_download_district_export_powerup_ytd(self):
+        df_result = self.lx.download_district_export_powerup_year_to_date(
+            write_to_disk=''
+        )
+        self.assertTrue(isinstance(df_result, pd.DataFrame))
+        print(df_result.head())
+
+    # @unittest.skip('running subset of tests')
+    def test_download_district_export_email_timeout(self):
+        with self.assertRaises(ReportNotFound):
+            self.lx_test_email_timeout.download_district_export_powerup_year_to_date(
+                write_to_disk=''
+            )
+
+    @unittest.skip('running subset of tests')
+    def test_download_district_export_bad_folder(self):
+        with self.assertRaises(InvalidIMAPParameters):
+            self.lx_test_email_non_existant_folder.download_district_export_powerup_year_to_date(
+                write_to_disk=''
+            )
 
     @unittest.skip('running subset of tests')
     def test_get_exportid_from_email(self):
@@ -188,11 +261,11 @@ class TestSchoolMintDataSource(unittest.TestCase):
     def setUp(self):
         self.assertTrue(isinstance(self.sm, sm.SchoolMint))
 
-    #@unittest.skip('running subset of tests')
+    @unittest.skip('running subset of tests')
     def test_login(self):
         pass
 
-    #@unittest.skip('running subset of tests')
+    @unittest.skip('running subset of tests')
     def test_download_url_report(self):
         url = (
             "/report/applicantsDynamicTable?group=all&school=all&application_status=all"
@@ -207,7 +280,7 @@ class TestSchoolMintDataSource(unittest.TestCase):
 
         print(result.head())
 
-    #@unittest.skip('running subset of tests')
+    @unittest.skip('running subset of tests')
     def test_generate_custom_report(self):
         custom_report_name = 'Re-enrollment Data'
         # generate the report
@@ -223,14 +296,14 @@ class TestSchoolMintDataSource(unittest.TestCase):
 
         self.assertTrue(not result_two)
 
-    #@unittest.skip('running subset of tests')
+    @unittest.skip('running subset of tests')
     def test_generate_custom_report_report_on_different_page(self):
         custom_report_name = 'Interested Families CA 18-19'
         result = self.sm.generate_custom_report(custom_report_name, '2018-2019')
 
         self.assertTrue(result)
 
-    #@unittest.skip('running subset of tests')
+    @unittest.skip('running subset of tests')
     def test_get_last_custom_report_generation_time(self):
         custom_report_name = 'Application Data'
 
@@ -241,7 +314,7 @@ class TestSchoolMintDataSource(unittest.TestCase):
         # We will need to check the datetime is returned properly manually
         return True
 
-    #@unittest.skip('running subset of tests')
+    @unittest.skip('running subset of tests')
     def test_download_csv_custom_report(self):
         custom_report_name = 'All Siblings'
         school_year = '2017-2018'
@@ -252,16 +325,18 @@ class TestSchoolMintDataSource(unittest.TestCase):
 
         print(result.head())
 
-    #@unittest.skip('running subset of tests')
+    @unittest.skip('running subset of tests')
     def test_set_year(self):
         year = '2016-2017'
         result = self.sm._set_year(year)
 
         self.assertTrue(result)
 
-    #@unittest.skip('running subset of tests')
+        self.assertTrue(self.sm.check_school_year(year))
+
+    @unittest.skip('running subset of tests')
     def test_download_csv_custom_report_with_year_change(self):
-        custom_report_name = 'Conversion Rates CA'
+        custom_report_name = 'Conversion Rates CA 15-16'
         school_year = '2015-2016'
 
         result = self.sm.download_csv_custom_report(custom_report_name, school_year)
@@ -273,7 +348,7 @@ class TestSchoolMintDataSource(unittest.TestCase):
     #@unittest.skip('running subset of tests')
     def test_download_zip_custom_report(self):
         custom_report_name = 'Application Data'
-        school_year = '2018-2019'
+        school_year = '2019-2020'
 
         result = self.sm.download_zip_custom_report(
             report_name=custom_report_name,
@@ -285,11 +360,10 @@ class TestSchoolMintDataSource(unittest.TestCase):
 
         self.assertTrue(isinstance(result, dict))
 
-        self.assertTrue(isinstance(result['application_data_exporter'], pd.DataFrame))
-
-        print(result.keys())
-
-        print(result['application_data_exporter'].head())
+        for key in result.keys():
+            if 'application_data_exporter' in key:
+                self.assertTrue(isinstance(result[key], pd.DataFrame))
+                print(result[key].head())
 
 
 class TestInformedK12DataSource(unittest.TestCase):
@@ -753,7 +827,7 @@ class TestCalpadsDataSource(unittest.TestCase):
 
         
 if __name__ == '__main__':
-    # uncomment the next two lines to just test the SchoolMint code
+    # uncomment the next two lines to just test the Lexia code
     # lexia = unittest.defaultTestLoader.loadTestsFromTestCase(TestLexiaDataSource)
     # unittest.TextTestRunner().run(lexia)
 
