@@ -436,6 +436,7 @@ class Calpads(WebUIDataSource, LoggingMixin):
         self.driver.get('https://www.calpads.org/Extract/SSIDExtract')
 
         try:
+            #TODO: More dynamic jobid selection? Or always assume the latest upload/import?
             jobid_option = WebDriverWait(self.driver, self.wait_time).until(EC.element_located_selection_state_to_be((By.XPATH,'//*[@id="SelectedJobIDssidExtractbyJob"]/option'), True))
         except TimeoutException:
             self.log.info('Job ID failed to automatically populate for SSID Extract for {}. Did you post the file you uploaded yet?'.format(lea_code))
@@ -716,6 +717,7 @@ class Calpads(WebUIDataSource, LoggingMixin):
         attempts = 0
         #CSV download button cannot be clicked until the menu is visible
         #TODO: Use the Async_Wait element visibility as the marker of a completed download? //*[@id="ReportViewer1_AsyncWait_Wait"]
+        #No, Yusuph, you cannot wait for its staleness. It does not disappear from the DOM, only gets hidden/display: none.
         while not dropdown and attempts < max_attempts:
             try:
                 #The dropdown button to make the dropdown appear
@@ -770,9 +772,6 @@ class Calpads(WebUIDataSource, LoggingMixin):
         use for one-off download of the report available on the page when it finishes loading.
         """
         #TODO: Consider data structure to keep track of LEAs that have had a particular report downloaded and when
-        dl_types = {'csv': '//*[@id="ReportViewer1_ctl09_ctl04_ctl00_Menu"]/div[7]/a',
-                    'pdf': '//*[@id="ReportViewer1_ctl09_ctl04_ctl00_Menu"]/div[4]/a',
-                    'excel': '//*[@id="ReportViewer1_ctl09_ctl04_ctl00_Menu"]/div[2]/a'}
         try:
             #In case it's not in the report iframe context
             self.driver.switch_to.frame(self.driver.find_element_by_xpath('//*[@id="reports"]/div/div/div/iframe'))
@@ -781,8 +780,10 @@ class Calpads(WebUIDataSource, LoggingMixin):
         if self.__wait_for_download_dropdown(lea_code, report_code, max_attempts):
             #TODO: CHANGE FOLDER TO BE TEMP/SPECIFIED FOLDER PATTERN
             current_file_num = list(os.walk(dl_folder))[0][2]
-            dl_btn = self.driver.find_element_by_xpath(dl_types[dl_type])
-            dl_btn.send_keys(Keys.ENTER)
+            dl_options = self.driver.find_element_by_id('ReportViewer1_ctl09_ctl04_ctl00_Menu')
+            for dl_btn in dl_options.find_elements_by_tag_name('a'):
+                if dl_type.lower() in dl_btn.get_property('innerHTML').lower():
+                    dl_btn.click()
             #script occasionally skips this function call for some reason
             if wait_for_new_file_in_folder(dl_folder, current_file_num):
                 pass
@@ -882,7 +883,7 @@ class Calpads(WebUIDataSource, LoggingMixin):
         #clean up
         if not temp_folder_name:
             shutil.rmtree(report_download_folder_path)
-        
+        #TODO: result = None when the option is PDF which might be confusing/unexpected for users. Not sure what a better alternative would be.
         return result
 
 def wait_for_new_file_in_folder(folder_path, num_files_original, max_attempts=20000):
